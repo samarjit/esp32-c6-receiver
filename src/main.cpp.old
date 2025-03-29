@@ -1,0 +1,288 @@
+#include <Arduino.h>
+#include "soc/mcpwm_reg.h"
+#include <driver/mcpwm.h>
+#include <soc/mcpwm_periph.h>
+#include "driver/ledc.h"
+// #include "ESP32MotorControl.h"
+
+// you can enable debug logging to Serial at 115200
+// #define REMOTEXY__DEBUGLOG    
+
+// RemoteXY select connection mode and include library 
+#define REMOTEXY_MODE__ESP32CORE_BLE
+
+#include <BLEDevice.h>
+
+// RemoteXY connection settings 
+#define REMOTEXY_BLUETOOTH_NAME "Test"
+
+#include <RemoteXY.h>
+
+// RemoteXY GUI configuration  
+#pragma pack(push, 1)  
+// uint8_t RemoteXY_CONF[] =   // 45 bytes
+//   { 255,3,0,0,0,38,0,18,0,0,0,31,1,106,200,1,1,2,0,2,
+//   29,17,44,22,0,2,26,31,31,79,78,0,79,70,70,0,5,19,86,60,
+//   60,0,2,26,31 };
+  
+// // this structure defines all the variables and events of your control interface 
+// struct {
+
+//     // input variables
+//   uint8_t switch_01; // =1 if switch ON and =0 if OFF
+//   int8_t joystick_02_x; // from -100 to 100
+//   int8_t joystick_02_y; // from -100 to 100
+
+//     // other variable
+//   uint8_t connect_flag;  // =1 if wire connected, else =0
+
+// } RemoteXY;   
+
+uint8_t RemoteXY_CONF[] =   // 62 bytes
+  { 255,5,0,0,0,55,0,19,0,0,0,0,31,1,106,200,1,1,4,0,
+  2,58,10,44,22,0,2,26,31,31,79,78,0,79,70,70,0,4,9,21,
+  13,91,0,2,26,4,5,171,93,17,176,2,26,5,38,97,49,49,37,2,
+  26,31 };
+
+struct {
+    // input variables
+    // input variables
+  uint8_t switch_01; // =1 if switch ON and =0 if OFF
+  int8_t slider_01; // from 0 to 100
+  int8_t slider_02; // from -100 to 100
+  int8_t joystick_01_x; // from -100 to 100
+  int8_t joystick_01_y; // from -100 to 100
+
+    // other variable
+  uint8_t connect_flag;  // =1 if wire connected, else =0
+
+} RemoteXY;   
+
+#pragma pack(pop)
+
+#define PIN_SWITCH_01 20
+
+// PWM channel can be 0-15 on ESP32
+// AIN1
+#define PWM_ch_throttle_left_fw 0
+// AIN2
+#define PWM_ch_throttle_left_bk 1
+// BIN1
+#define PWM_ch_throttle_right_fw 3
+// BIN2
+#define PWM_ch_throttle_right_bk 4
+
+static const uint32_t duty_cycle_max = 88;
+
+// put function declarations here:
+int myFunction(int, int);
+void setSpeed(bool bBrake, mcpwm_timer_t timer, int32_t iSpeed);
+
+/*
+MCPWM Units and Signals
+MCPWM Unit 0:
+
+Timers: MCPWM_TIMER_0, MCPWM_TIMER_1, MCPWM_TIMER_2
+Operators: Each timer has two operators, A and B
+MCPWM0A: Operator A of Timer 0
+MCPWM0B: Operator B of Timer 0
+MCPWM1A: Operator A of Timer 1
+MCPWM1B: Operator B of Timer 1
+MCPWM2A: Operator A of Timer 2
+MCPWM2B: Operator B of Timer 2
+
+MCPWM Unit 1:
+Timers: MCPWM_TIMER_0, MCPWM_TIMER_1, MCPWM_TIMER_2
+Operators: Each timer has two operators, A and B
+MCPWM0A: Operator A of Timer 0
+MCPWM0B: Operator B of Timer 0
+MCPWM1A: Operator A of Timer 1
+MCPWM1B: Operator B of Timer 1
+MCPWM2A: Operator A of Timer 2
+MCPWM2B: Operator B of Timer 2
+*/
+
+void setupLedc(int pin) {
+    // Configure the LEDC timer
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,       // LEDC low-speed mode
+        .duty_resolution = LEDC_TIMER_8_BIT,     // 8-bit resolution (0-255 duty)
+        .timer_num = LEDC_TIMER_0,                 // Timer 0
+        .freq_hz = 5000,                         // 5 kHz frequency
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+    ledc_timer_config(&ledc_timer);
+
+    // Configure the LEDC channel
+    ledc_channel_config_t ledc_channel = {
+        .gpio_num = pin,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL_0,
+        .timer_sel = LEDC_TIMER_0,
+        .duty = 128,                             // Initial duty cycle of 50% (128/255 for 8-bit)
+        .hpoint = 0
+    };
+    ledc_channel_config(&ledc_channel);
+}
+
+void setDutyCycle(uint32_t duty) {
+    // Set duty cycle for the LEDC channel
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0); // Update the duty cycle
+}
+
+// ESP32MotorControl MotorControl = ESP32MotorControl();
+
+void setup() {
+  RemoteXY_Init (); 
+  
+  pinMode (PIN_SWITCH_01, OUTPUT);
+  // put your setup code here, to run once:
+  pinMode(LED_BUILTIN, OUTPUT);
+  Serial.begin(115200);
+  // int result = myFunction(2, 3);
+  // Serial.println("Hello from Setup");
+
+  // PWM pin setup
+  // ledcAttachPin(10, PWM_ch_throttle_left_fw);
+  // ledcAttachPin(11, PWM_ch_throttle_right_fw);
+
+  // ledcSetup(PWM_ch_throttle_left_fw /* LEDChannel */, 500 /* freq */, 8 /* resolution */);
+  // ledcSetup(PWM_ch_throttle_right_fw /* LEDChannel */, 500 /* freq */, 8 /* resolution */);
+  // setupLedc(LED_BUILTIN);
+
+  // MCPWM has 2 units, each has two output channels (A, B)
+  // MCPWM_UNIT_0 MCPWM0A MCPWM0B // the '0' represents timer0
+  // MCPWM_UNIT_0 MCPWM1A MCPWM1B // the '1' represents timer1
+  // MCPWM_UNIT_0 has three timers: MCPWM_TIMER_0, MCPWM_TIMER_1, and MCPWM_TIMER_2
+  // Each timer has 2 operators (A, B) which can generate 2 PWM signals 
+ 
+ 
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, 6); //6 left forward throttle
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, 7); // right throttle
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM1A, 8); // elevator forward
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM1B, 9); // elevator forward
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM2A, 14); // rudder left
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM2B, 15); // rudder right
+
+
+  mcpwm_config_t pwm_config;
+  pwm_config.frequency = 500;    // Frequency = 1000Hz
+  pwm_config.cmpr_a = 0;          // Duty cycle of PWMxA = 0
+  pwm_config.cmpr_b = 0;          // Duty cycle of PWMxB = 0
+  pwm_config.counter_mode = MCPWM_UP_COUNTER;
+  pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
+  mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);
+  mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_1, &pwm_config);
+  mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_2, &pwm_config);
+
+  mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, MCPWM_DUTY_MODE_0); // left
+  mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); // right
+  mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_A, MCPWM_DUTY_MODE_0); // elevator
+  mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); // elevator
+  mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_2, MCPWM_OPR_A, MCPWM_DUTY_MODE_0); // rudder
+  mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_2, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); // rudder
+
+  mcpwm_deadtime_enable(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_ACTIVE_HIGH_COMPLIMENT_MODE, 100, 100);
+  mcpwm_deadtime_enable(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_ACTIVE_HIGH_COMPLIMENT_MODE, 100, 100);
+  mcpwm_deadtime_enable(MCPWM_UNIT_0, MCPWM_TIMER_2, MCPWM_ACTIVE_HIGH_COMPLIMENT_MODE, 100, 100);
+  // MotorControl.attachMotors(6, 7, 8, 9);
+  // MotorControl.motorsStop();
+}
+
+void loop() {
+  RemoteXY_Handler ();
+  
+  // digitalWrite(LED_BUILTIN, (RemoteXY.switch_01==0)?LOW:HIGH);
+  // put your main code here, to run repeatedly:
+  // digitalWrite(LED_BUILTIN, HIGH);
+  // Serial.println("Hello from loop");
+  // delay(1000);
+  // digitalWrite(LED_BUILTIN, LOW);
+
+  digitalWrite(PIN_SWITCH_01, RemoteXY.switch_01);
+   // TODO you loop code
+  // use the RemoteXY structure for data transfer
+  // do not call delay(), use instead RemoteXY_delay() 
+  RemoteXY_delay(1000);
+  // int green = RemoteXY.slider_02 > 0? RemoteXY.slider_02 * 2.55f : 0;
+  // int blue = RemoteXY.slider_02 < 0? RemoteXY.slider_02 * 2.55f * -1 : 0;
+  // neopixelWrite(RGB_BUILTIN, RemoteXY.slider_01 * 0.64, green, blue); 
+  
+  // ledcWrite(PWM_ch_throttle_left_fw, RemoteXY.slider_01 * 0.64);
+  // ledcWrite(PWM_ch_throttle_right_fw, RemoteXY.slider_01 * 0.64);
+  // mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, 50.0);
+  // mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, 50.0);
+  float left = 1.0f;
+  float right = 1.0f;
+  if (RemoteXY.slider_02 > 5) {
+    right = 1 - ((float)RemoteXY.slider_02)/100;
+  }
+  if (RemoteXY.slider_02 < 5) {
+    left = 1 - (-1 * ((float)RemoteXY.slider_02))/100;
+  }
+
+  int throttle = RemoteXY.slider_01;
+  int leftspeed = ((float)RemoteXY.slider_01) * left;
+  int rightspeed = ((float)RemoteXY.slider_01) * right;
+  printf("Hello from loop throttle=%d left=%d right=%d \n", throttle, leftspeed, rightspeed);
+  neopixelWrite(RGB_BUILTIN, RemoteXY.slider_01 * 0.64, leftspeed  * 0.64 , rightspeed * 0.64); 
+  // setSpeed(false, MCPWM_TIMER_0, ((float)RemoteXY.slider_01) * left);
+  // setSpeed(false, MCPWM_TIMER_1, ((float)RemoteXY.slider_01) * right);
+  // setSpeed(false, MCPWM_TIMER_2, RemoteXY.slider_02);
+  // setDutyCycle(RemoteXY.slider_01);
+  // MotorControl.motorForward(0, leftspeed);
+  // MotorControl.motorForward(1, rightspeed);
+
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_GEN_A, leftspeed);
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_GEN_B, rightspeed);
+
+  // if (RemoteXY.slider_02 > 0) {
+  //   // MotorControl.motorForward(0, RemoteXY.slider_02 );
+  //   setSpeed(false, MCPWM_TIMER_0, RemoteXY.slider_02);
+  // } else {
+  //   // MotorControl.motorReverse(0, RemoteXY.slider_02);
+  //   setSpeed(false, MCPWM_TIMER_0, RemoteXY.slider_02);
+  // }
+
+  setSpeed(false, MCPWM_TIMER_2, RemoteXY.joystick_01_x); // rudder
+  setSpeed(false, MCPWM_TIMER_1, RemoteXY.joystick_01_y); // elevator
+
+}
+
+void setSpeed(bool bBrake, mcpwm_timer_t timer, int32_t iSpeed)
+{
+    printf("speed %d\n", iSpeed);
+
+    if (bBrake)
+    {
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_A, 100);
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_B, 100);
+    }
+    else if (iSpeed > 0)
+    {
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_A, abs(iSpeed) * duty_cycle_max / 100);
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_B, 0);
+        mcpwm_set_signal_low(MCPWM_UNIT_0, timer, MCPWM_OPR_B);
+        mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
+    }
+    else if (iSpeed < 0)
+    {
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_A, 0);
+        mcpwm_set_signal_low(MCPWM_UNIT_0, timer, MCPWM_OPR_A);
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_B, abs(iSpeed) * duty_cycle_max / 100);
+        mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, MCPWM_DUTY_MODE_0);
+    }
+    else
+    {
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_A, 0);
+        mcpwm_set_duty(MCPWM_UNIT_0, timer, MCPWM_GEN_B, 0);
+    }
+}
+
+// put function definitions here:
+int myFunction(int x, int y) {
+  return x + y;
+}
+
+
