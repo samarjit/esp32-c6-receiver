@@ -89,6 +89,8 @@ void readMacAddress()
     }
 }
 
+int watchdog = 100;
+
 // esp-now sent event
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
 {
@@ -100,16 +102,25 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
     uint8_t airelon = map(espNowData.aileron, 0, 32737, 0, 255);
     uint8_t rudder = map(espNowData.rudder, 0, 32737, 0, 255);
     uint8_t elevator = map(espNowData.elevator, 0, 32737, 0, 255);
-    printf("throttle: %d airelon: %d rudder: %d elevator: %d\n", throttle, airelon, rudder, elevator);
+    // printf("throttle: %d airelon: %d rudder: %d elevator: %d\n", throttle, airelon, rudder, elevator);
     uint8_t leftMotor = throttle + 0.25 * (airelon - 111);
     uint8_t rightMotor = throttle - 0.25 * (airelon - 111);
-    printf("leftMotor: %d rightMotor: %d\n", leftMotor, rightMotor);
-    // analogWrite(6, leftMotor);
-    // analogWrite(7, rightMotor);
+    printf("throttle: %d airelon: %d , elevator: %d leftMotor: %d rightMotor: %d\n",throttle, airelon, elevator, leftMotor, rightMotor);
+    analogWrite(7, leftMotor);
+    analogWrite(4, rightMotor);
+
+    // if (elevator > 127) {
+    //     analogWrite(9, (elevator - 127) * 2);
+    //     digitalWrite(8, LOW);
+    // } else {
+    //     analogWrite(8, elevator * 2);
+    //     digitalWrite(9, LOW);
+    // }
     // set_motor_speed((float)throttle / 100, true);
     // set_motor_speed((float)rudder / 100, true);
     // set_motor_speed((float)elevator / 100, true);
     // set_motor_speed((float)airelon / 100, true);
+    watchdog = 100;
 }
 
 void setup()
@@ -159,41 +170,15 @@ void setup()
 
 void loop()
 {
-    digitalWrite(4, HIGH);
-    digitalWrite(5, HIGH);
-    readMacAddress();
-
-    for (float duty_cycle = 0.0; duty_cycle <= 1.0; duty_cycle += 0.1)
-    {
-        printf("Forward Speed: %.2f\n", duty_cycle);
-        // set_motor_speed(duty_cycle, true);
-        // analogWrite(7, duty_cycle * 255);
-        // analogWrite(7, duty_cycle * 255);
-        // digitalWrite(6, HIGH);
-        // digitalWrite(7, LOW);
-        digitalWrite(8, HIGH);
-        digitalWrite(9, LOW);
-        delay(500);
+    // digitalWrite(4, HIGH);
+    // digitalWrite(5, HIGH);
+    // readMacAddress();
+    watchdog--;
+    delay(10);
+    if (watchdog <= 0) {
+        digitalWrite(7, HIGH);
+        digitalWrite(4, HIGH);
+        printf("Watchdog stopped\n");
     }
-    digitalWrite(8, LOW);
-    digitalWrite(9, LOW);
-    delay(1000);
-
-    // Test reverse motion
-    // printf("Reversing Motor\n");
-    for (float duty_cycle = 0.0; duty_cycle <= 1.0; duty_cycle += 0.1)
-    {
-        printf("Reversing Speed: %.2f\n", duty_cycle);
-        // set_motor_speed(duty_cycle, false);
-        // analogWrite(6, duty_cycle * 255);
-        // digitalWrite(6, LOW);
-        // digitalWrite(7, HIGH);
-        digitalWrite(8, LOW);
-        digitalWrite(9, HIGH);
-        delay(500);
-    }
-    delay(2000);
-    digitalWrite(5, HIGH);
-    digitalWrite(7, HIGH);
-    delay(5000);
+    
 }
