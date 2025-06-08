@@ -103,9 +103,21 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
     uint8_t rudder = map(espNowData.rudder, 0, 32737, 0, 255);
     uint8_t elevator = map(espNowData.elevator, 0, 32737, 0, 255);
     // printf("throttle: %d airelon: %d rudder: %d elevator: %d\n", throttle, airelon, rudder, elevator);
-    uint8_t leftMotor = throttle + 0.25 * (airelon - 111);
-    uint8_t rightMotor = throttle - 0.25 * (airelon - 111);
+    int leftMotor = throttle + 0.25 * (airelon - 111);
+    int rightMotor = throttle - 0.25 * (airelon - 111);
     printf("throttle: %d airelon: %d , elevator: %d leftMotor: %d rightMotor: %d\n",throttle, airelon, elevator, leftMotor, rightMotor);
+    if (leftMotor < 0) {
+        leftMotor = 0;
+    }
+    if (rightMotor < 0) {
+        rightMotor = 0;
+    }
+    if (leftMotor > 255) {
+        leftMotor = 255;
+    }
+    if (rightMotor > 255) {
+        rightMotor = 255;
+    }
     analogWrite(7, leftMotor);
     analogWrite(4, rightMotor);
 
@@ -176,8 +188,8 @@ void loop()
     watchdog--;
     delay(10);
     if (watchdog <= 0) {
-        digitalWrite(7, HIGH);
-        digitalWrite(4, HIGH);
+        analogWrite(7, LOW);
+        analogWrite(4, LOW);
         printf("Watchdog stopped\n");
     }
     
